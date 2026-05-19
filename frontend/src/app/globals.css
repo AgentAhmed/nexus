@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { --nexus: #534AB7; }
+
+* { box-sizing: border-box; }
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: #111; }
+::-webkit-scrollbar-thumb { background: #534AB7; border-radius: 2px; }
+
+.pulse-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(1.3); }
+}
+
+.agent-card {
+  @apply bg-gray-900 border border-gray-800 rounded-xl p-4;
+  transition: border-color 0.2s;
+}
+.agent-card:hover { border-color: #534AB7; }
+
+.badge {
+  @apply inline-flex items-center gap-1 text-xs font-medium px-2.5 py-0.5 rounded-full;
+}
