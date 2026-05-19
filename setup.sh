@@ -5,7 +5,7 @@
 # ============================================================
 set -e
 
-REPO_URL="https://github.com/YOUR_USERNAME/nexus.git"   # <-- update this
+REPO_URL="https://github.com/AgentAhmed/nexus.git"   # <-- update this
 PROJECT_DIR="/opt/nexus"
 
 echo "============================================"
