@@ -1,82 +1,91 @@
 """
-NEXUS Configuration
-All settings read from environment variables with safe defaults.
-The system degrades gracefully when optional APIs are not provided.
+NEXUS v2 — Provider-Agnostic Configuration
+Supports ANY LLM provider via LiteLLM. Switch providers by changing one env var.
+
+Free options (no credit card needed):
+  LLM:        GROQ_API_KEY     → groq/llama-3.3-70b-versatile  (recommended free)
+              GEMINI_API_KEY   → gemini/gemini-1.5-flash
+              OLLAMA           → ollama/llama3.2  (100% local, truly free)
+  STT:        GROQ_API_KEY     → Groq Whisper (same key, free)
+              (none)           → local faster-whisper
+  Embeddings: GEMINI_API_KEY   → gemini embeddings (free)
+              (none)           → sentence-transformers (local)
 """
 import os
-from enum import Enum
 
-# ── LLM Provider priority ──────────────────────────────────────────────────────
-# System auto-selects based on which keys are present.
-# Priority: Gemini > Vultr Serverless > Featherless
+# ── Primary LLM (LiteLLM model string) ───────────────────────────────────────
+# Examples:
+#   "groq/llama-3.3-70b-versatile"          ← free, fast, recommended
+#   "groq/llama-3.1-8b-instant"             ← free, fastest
+#   "gemini/gemini-1.5-flash"               ← free, Google
+#   "gemini/gemini-2.0-flash-exp"           ← free, latest Google
+#   "openai/gpt-4o-mini"                    ← paid, cheap
+#   "anthropic/claude-3-5-haiku-20241022"   ← paid
+#   "ollama/llama3.2"                       ← local, truly free (needs Ollama installed)
+PRIMARY_MODEL   = os.getenv("PRIMARY_MODEL",   "groq/llama-3.3-70b-versatile")
+FAST_MODEL      = os.getenv("FAST_MODEL",      "groq/llama-3.1-8b-instant")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "gemini/text-embedding-004")
 
-GEMINI_API_KEY       = os.getenv("GEMINI_API_KEY", "")
-VULTR_API_KEY        = os.getenv("VULTR_API_KEY", "")          # Vultr serverless inference
-FEATHERLESS_API_KEY  = os.getenv("FEATHERLESS_API_KEY", "")
+# ── API Keys — only set the ones you have ────────────────────────────────────
+GROQ_API_KEY      = os.getenv("GROQ_API_KEY",      "")   # free at console.groq.com
+GEMINI_API_KEY    = os.getenv("GEMINI_API_KEY",    "")   # free at aistudio.google.com
+OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY",    "")   # paid
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")   # paid
+OLLAMA_BASE_URL   = os.getenv("OLLAMA_BASE_URL",   "http://localhost:11434")  # local
 
-SPEECHMATICS_API_KEY = os.getenv("SPEECHMATICS_API_KEY", "")   # optional - falls back to demo mode
-SLACK_WEBHOOK_URL    = os.getenv("SLACK_WEBHOOK_URL", "")       # optional
-JIRA_BASE_URL        = os.getenv("JIRA_BASE_URL", "")           # optional
-JIRA_API_TOKEN       = os.getenv("JIRA_API_TOKEN", "")          # optional
-JIRA_USER_EMAIL      = os.getenv("JIRA_USER_EMAIL", "")         # optional
+# ── STT (Speech-to-Text) ─────────────────────────────────────────────────────
+# "groq"    → Groq Whisper API (free, fast) — uses GROQ_API_KEY
+# "openai"  → OpenAI Whisper API — uses OPENAI_API_KEY
+# "local"   → faster-whisper (runs on CPU, no API key needed)
+# "demo"    → built-in demo transcript (for testing with no keys at all)
+STT_PROVIDER = os.getenv("STT_PROVIDER", "groq" if GROQ_API_KEY else "local")
 
-# Vultr Serverless Inference endpoint (OpenAI-compatible)
-VULTR_INFERENCE_BASE = "https://api.vultrinference.com/v1"
-VULTR_INFERENCE_MODEL = os.getenv("VULTR_INFERENCE_MODEL", "llama-3.1-70b-instruct-fp8")
+# ── Vector Store ─────────────────────────────────────────────────────────────
+# "chroma"    → ChromaDB local file (default, free, zero setup)
+# "supabase"  → Supabase pgvector (free hosted, needs SUPABASE_URL + SUPABASE_KEY)
+VECTOR_STORE     = os.getenv("VECTOR_STORE",     "chroma")
+CHROMA_PATH      = os.getenv("CHROMA_PATH",      "./nexus_chroma_db")
+SUPABASE_URL     = os.getenv("SUPABASE_URL",     "")
+SUPABASE_KEY     = os.getenv("SUPABASE_KEY",     "")
 
-# Featherless (OpenAI-compatible)
-FEATHERLESS_BASE     = "https://api.featherless.ai/v1"
-FEATHERLESS_MODEL    = os.getenv("FEATHERLESS_MODEL", "meta-llama/Meta-Llama-3.1-8B-Instruct")
+# ── Execution integrations (all optional) ────────────────────────────────────
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
+JIRA_BASE_URL     = os.getenv("JIRA_BASE_URL",     "")
+JIRA_API_TOKEN    = os.getenv("JIRA_API_TOKEN",    "")
+JIRA_USER_EMAIL   = os.getenv("JIRA_USER_EMAIL",   "")
+LINEAR_API_KEY    = os.getenv("LINEAR_API_KEY",    "")   # Linear.app (popular with startups)
+NOTION_API_KEY    = os.getenv("NOTION_API_KEY",    "")   # Notion
+WEBHOOK_URL       = os.getenv("WEBHOOK_URL",        "")  # generic webhook (Zapier, Make, n8n)
 
-# Gemini models
-GEMINI_FLASH_MODEL   = "gemini-1.5-flash"
-GEMINI_PRO_MODEL     = "gemini-1.5-pro"
+# ── Auth (SaaS mode) ─────────────────────────────────────────────────────────
+NEXUS_API_KEY     = os.getenv("NEXUS_API_KEY",     "")   # master key for self-hosted
+JWT_SECRET        = os.getenv("JWT_SECRET",         "change-this-in-production-please")
+ENABLE_AUTH       = os.getenv("ENABLE_AUTH",        "false").lower() == "true"
 
-# Storage
-CHROMA_PATH          = os.getenv("CHROMA_PATH", "./nexus_chroma_db")
-REDIS_URL            = os.getenv("REDIS_URL", "redis://localhost:6379")
-POSTGRES_URL         = os.getenv("POSTGRES_URL", "")   # empty = use SQLite
+# ── App ───────────────────────────────────────────────────────────────────────
+APP_HOST          = os.getenv("APP_HOST",           "0.0.0.0")
+APP_PORT          = int(os.getenv("APP_PORT",       "8000"))
+FRONTEND_URL      = os.getenv("FRONTEND_URL",       "http://localhost:3000")
+ENABLE_PHOENIX    = os.getenv("ENABLE_PHOENIX",     "false").lower() == "true"
+REDIS_URL         = os.getenv("REDIS_URL",          "")  # optional, falls back to in-memory
 
-# Observability
-ENABLE_PHOENIX       = os.getenv("ENABLE_PHOENIX", "true").lower() == "true"
-PHOENIX_PORT         = int(os.getenv("PHOENIX_PORT", "6006"))
+# ── Provider detection helpers ────────────────────────────────────────────────
+def has_llm() -> bool:
+    return bool(GROQ_API_KEY or GEMINI_API_KEY or OPENAI_API_KEY or ANTHROPIC_API_KEY)
 
-# App
-APP_HOST             = os.getenv("APP_HOST", "0.0.0.0")
-APP_PORT             = int(os.getenv("APP_PORT", "8000"))
-FRONTEND_URL         = os.getenv("FRONTEND_URL", "http://localhost:3000")
+def has_embeddings() -> bool:
+    return bool(GEMINI_API_KEY or OPENAI_API_KEY)
 
-# ── Provider detection ─────────────────────────────────────────────────────────
+def get_litellm_env() -> None:
+    """Set env vars LiteLLM needs to authenticate providers."""
+    if GROQ_API_KEY:      os.environ["GROQ_API_KEY"]      = GROQ_API_KEY
+    if GEMINI_API_KEY:    os.environ["GEMINI_API_KEY"]     = GEMINI_API_KEY
+    if OPENAI_API_KEY:    os.environ["OPENAI_API_KEY"]     = OPENAI_API_KEY
+    if ANTHROPIC_API_KEY: os.environ["ANTHROPIC_API_KEY"]  = ANTHROPIC_API_KEY
+    if OLLAMA_BASE_URL:   os.environ["OLLAMA_API_BASE"]    = OLLAMA_BASE_URL
 
-def get_primary_llm_provider() -> str:
-    """Return the best available LLM provider."""
-    if GEMINI_API_KEY:
-        return "gemini"
-    if VULTR_API_KEY:
-        return "vultr"
-    if FEATHERLESS_API_KEY:
-        return "featherless"
-    raise EnvironmentError(
-        "No LLM API key found. Set GEMINI_API_KEY, VULTR_API_KEY, or FEATHERLESS_API_KEY."
-    )
-
-def get_openai_compat_config() -> dict:
-    """
-    Returns (base_url, api_key, model) for OpenAI-compatible providers.
-    Used by domain agents (Featherless / Vultr fallback).
-    """
-    if VULTR_API_KEY:
-        return {"base_url": VULTR_INFERENCE_BASE, "api_key": VULTR_API_KEY, "model": VULTR_INFERENCE_MODEL}
-    if FEATHERLESS_API_KEY:
-        return {"base_url": FEATHERLESS_BASE, "api_key": FEATHERLESS_API_KEY, "model": FEATHERLESS_MODEL}
-    # Fallback: use Gemini (via google-generativeai, not OpenAI compat)
-    return {"base_url": None, "api_key": GEMINI_API_KEY, "model": GEMINI_FLASH_MODEL}
-
-def voice_enabled() -> bool:
-    return bool(SPEECHMATICS_API_KEY)
-
-def slack_enabled() -> bool:
-    return bool(SLACK_WEBHOOK_URL)
-
-def jira_enabled() -> bool:
-    return bool(JIRA_BASE_URL and JIRA_API_TOKEN and JIRA_USER_EMAIL)
+def slack_enabled()  -> bool: return bool(SLACK_WEBHOOK_URL)
+def jira_enabled()   -> bool: return bool(JIRA_BASE_URL and JIRA_API_TOKEN)
+def linear_enabled() -> bool: return bool(LINEAR_API_KEY)
+def notion_enabled() -> bool: return bool(NOTION_API_KEY)
+def webhook_enabled()-> bool: return bool(WEBHOOK_URL)

@@ -1,28 +1,21 @@
 """
 NEXUS Orchestrator — LangGraph multi-agent state machine
-Flow: transcript → intent extraction → RAG retrieval → domain agent → execution
+Fully provider-agnostic: swaps LLM by changing PRIMARY_MODEL in .env
 """
-import asyncio
-import json
-import re
-import uuid
+import operator, uuid
 from typing import TypedDict, Literal, Annotated
-import operator
 
-import google.generativeai as genai
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
-from backend.config import GEMINI_API_KEY, GEMINI_FLASH_MODEL, get_primary_llm_provider
+from backend.agents.llm import llm_fast, parse_json_response
 from backend.agents.context_agent import ContextAgent
 from backend.agents.domain_agents import get_domain_agent
 from backend.agents.execution_agent import ExecutionAgent
 from backend.observability.tracer import trace_agent_step, METRICS
 
-genai.configure(api_key=GEMINI_API_KEY)
-_flash = genai.GenerativeModel(GEMINI_FLASH_MODEL)
 
-# ── State ───────────────────────────────────────────────────────────────────────
+# ── State ──────────────────────────────────────────────────────────────────────
 
 class NexusState(TypedDict):
     transcript:        str
@@ -37,41 +30,33 @@ class NexusState(TypedDict):
     confidence:        float
     error:             str | None
 
-# ── Nodes ────────────────────────────────────────────────────────────────────────
+
+# ── Nodes ──────────────────────────────────────────────────────────────────────
 
 async def node_extract_intent(state: NexusState) -> dict:
-    """Gemini Flash: extract domain, action items, decisions from transcript."""
     import time; t0 = time.time()
-    with trace_agent_step("intent_extraction", state["transcript"][:300]):
-        prompt = f"""
-You are an enterprise meeting analyst. Analyse the transcript below and extract structured data.
+    with trace_agent_step("intent_extraction"):
+        messages = [
+            {"role": "system", "content": "You are an enterprise meeting analyst. Return ONLY valid JSON."},
+            {"role": "user",   "content": f"""
+Analyse this meeting transcript and extract structured data.
 
 Transcript:
 {state["transcript"]}
 
-Return ONLY valid JSON (no markdown, no explanation):
+Return JSON only:
 {{
-  "domain": "legal|finance|hr|ops|general",
-  "action_items": ["<action item 1>", "..."],
-  "decisions": ["<decision 1>", "..."],
-  "confidence": 0.0
+  "domain": "legal|finance|hr|ops|sales|marketing|general",
+  "action_items": ["verb + task + owner where mentioned"],
+  "decisions": ["what was agreed or decided"],
+  "confidence": 0.85
 }}
 
-Rules:
-- domain: pick the ONE that best matches the main topic
-- action_items: concrete tasks with a verb (max 10)
-- decisions: things that were agreed/decided (max 10)
-- confidence: 0.0-1.0 based on how clear the transcript is
-"""
-        try:
-            resp = await _flash.generate_content_async(prompt)
-            raw  = resp.text or "{}"
-            raw  = re.sub(r"```(?:json)?|```", "", raw).strip()
-            data = json.loads(raw)
-        except Exception as exc:
-            print(f"[intent] parse error: {exc}")
-            data = {}
-
+Rules: domain = ONE best-fit category. confidence = how clear the transcript is (0-1).
+"""},
+        ]
+        raw  = await llm_fast(messages, json_mode=True)
+        data = parse_json_response(raw)
         METRICS.record_call("intent_agent", round((time.time()-t0)*1000))
         return {
             "domain":       data.get("domain", "general"),
@@ -82,16 +67,15 @@ Rules:
 
 
 async def node_retrieve_context(state: NexusState) -> dict:
-    """ChromaDB RAG: retrieve enterprise knowledge relevant to this meeting."""
     import time; t0 = time.time()
-    with trace_agent_step("rag_retrieval", state["domain"]):
+    with trace_agent_step("rag_retrieval"):
         agent = ContextAgent()
-        query = f"{state['domain']} " + " ".join(state["action_items"][:5])
-        chunks_with_scores = await agent.retrieve_with_scores(query, top_k=5)
-        if chunks_with_scores:
-            avg_score = sum(s for _, s in chunks_with_scores) / len(chunks_with_scores)
-            METRICS.record_rag(avg_score)
-            context = "\n---\n".join(c for c, _ in chunks_with_scores)
+        query = f"{state['domain']} {' '.join(state['action_items'][:5])}"
+        chunks_scores = await agent.retrieve_with_scores(query, top_k=5)
+        if chunks_scores:
+            avg = sum(s for _, s in chunks_scores) / len(chunks_scores)
+            METRICS.record_rag(avg)
+            context = "\n---\n".join(c for c, _ in chunks_scores)
         else:
             context = ""
         METRICS.record_call("rag_agent", round((time.time()-t0)*1000))
@@ -99,9 +83,8 @@ async def node_retrieve_context(state: NexusState) -> dict:
 
 
 async def node_domain_agent(state: NexusState) -> dict:
-    """Specialized domain agent analyses action items with expert knowledge."""
     import time; t0 = time.time()
-    with trace_agent_step(f"domain_{state['domain']}", str(state["action_items"])[:200]):
+    with trace_agent_step(f"domain_{state['domain']}"):
         agent    = get_domain_agent(state["domain"])
         analysis = await agent.analyze(
             transcript=state["transcript"],
@@ -113,14 +96,11 @@ async def node_domain_agent(state: NexusState) -> dict:
 
 
 async def node_execute(state: NexusState) -> dict:
-    """Execution agent: auto-execute high-confidence actions."""
     import time; t0 = time.time()
-    with trace_agent_step("execution", str(state["action_items"])[:200]):
+    with trace_agent_step("execution"):
         executor = ExecutionAgent()
         results  = await executor.execute_batch(
-            action_items=state["action_items"],
-            domain=state["domain"],
-            analysis=state["domain_analysis"],
+            state["action_items"], state["domain"], state["domain_analysis"]
         )
         for r in results:
             METRICS.record_execution(r.get("status") == "success")
@@ -129,64 +109,45 @@ async def node_execute(state: NexusState) -> dict:
 
 
 async def node_flag_approval(state: NexusState) -> dict:
-    """Low-confidence: surface actions for human approval instead of auto-executing."""
     return {"pending_approvals": state["action_items"]}
 
 
-# ── Routing ───────────────────────────────────────────────────────────────────
+# ── Routing ────────────────────────────────────────────────────────────────────
 
-def route_after_domain(state: NexusState) -> Literal["execute", "flag_approval", "__end__"]:
+def route_after_domain(state: NexusState) -> str:
     if not state["action_items"]:
         return "__end__"
-    if state["confidence"] >= 0.70:
-        return "execute"
-    return "flag_approval"
+    return "execute" if state["confidence"] >= 0.70 else "flag_approval"
 
 
-# ── Graph ─────────────────────────────────────────────────────────────────────
+# ── Graph ──────────────────────────────────────────────────────────────────────
 
-def build_graph() -> StateGraph:
+def build_graph():
     g = StateGraph(NexusState)
-
     g.add_node("extract_intent",   node_extract_intent)
     g.add_node("retrieve_context", node_retrieve_context)
     g.add_node("domain_agent",     node_domain_agent)
     g.add_node("execute",          node_execute)
     g.add_node("flag_approval",    node_flag_approval)
-
     g.set_entry_point("extract_intent")
     g.add_edge("extract_intent",   "retrieve_context")
     g.add_edge("retrieve_context", "domain_agent")
-    g.add_conditional_edges("domain_agent", route_after_domain, {
-        "execute":       "execute",
-        "flag_approval": "flag_approval",
-        "__end__":       END,
-    })
+    g.add_conditional_edges("domain_agent", route_after_domain,
+        {"execute": "execute", "flag_approval": "flag_approval", "__end__": END})
     g.add_edge("execute",       END)
     g.add_edge("flag_approval", END)
-
     return g.compile(checkpointer=MemorySaver())
 
 
 NEXUS_GRAPH = build_graph()
 
-# ── Public API ────────────────────────────────────────────────────────────────
 
-async def run_nexus(transcript: str, speaker_map: dict, thread_id: str | None = None) -> NexusState:
-    thread_id = thread_id or str(uuid.uuid4())
-    initial: NexusState = {
-        "transcript":        transcript,
-        "speaker_map":       speaker_map,
-        "retrieved_context": "",
-        "domain":            "general",
-        "domain_analysis":   "",
-        "action_items":      [],
-        "decisions":         [],
-        "executions_done":   [],
-        "pending_approvals": [],
-        "confidence":        0.0,
-        "error":             None,
-    }
-    config = {"configurable": {"thread_id": thread_id}}
-    result = await NEXUS_GRAPH.ainvoke(initial, config=config)
-    return result
+async def run_nexus(transcript: str, speaker_map: dict = None, thread_id: str = None) -> NexusState:
+    initial = NexusState(
+        transcript=transcript, speaker_map=speaker_map or {},
+        retrieved_context="", domain="general", domain_analysis="",
+        action_items=[], decisions=[], executions_done=[],
+        pending_approvals=[], confidence=0.0, error=None,
+    )
+    config = {"configurable": {"thread_id": thread_id or str(uuid.uuid4())}}
+    return await NEXUS_GRAPH.ainvoke(initial, config=config)
