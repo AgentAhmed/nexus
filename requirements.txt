@@ -1,39 +1,45 @@
-# NEXUS Python dependencies
-# Install: pip install -r requirements.txt
+# NEXUS v2 — Dependencies
+# Core: litellm handles ALL LLM providers (Groq, Gemini, OpenAI, Ollama, etc.)
 
-# ── Agent orchestration ───────────────────────────────────────
+# ── Agent framework ───────────────────────────────────────────────────────────
 langgraph>=0.2.0
 langchain>=0.3.0
-langchain-google-genai>=2.0.0
 langchain-community>=0.3.0
 
-# ── LLM providers ─────────────────────────────────────────────
-google-generativeai>=0.8.0
-openai>=1.40.0              # Featherless + Vultr + Whisper (all OpenAI-compatible)
+# ── LLM Gateway (replaces all provider-specific SDKs) ────────────────────────
+litellm>=1.40.0          # one API for 100+ LLM providers
 
-# ── Voice ─────────────────────────────────────────────────────
-websockets>=12.0
+# ── Provider SDKs (only installed once, litellm uses them automatically) ─────
+groq>=0.9.0              # Groq API (free tier — recommended)
+google-generativeai>=0.8.0  # Gemini (free tier)
+openai>=1.40.0           # OpenAI + any OpenAI-compatible API
 
-# ── RAG / vector store ────────────────────────────────────────
+# ── Voice / STT ───────────────────────────────────────────────────────────────
+# Groq Whisper uses the groq SDK above (already included)
+# For local STT (no API key needed):
+faster-whisper>=1.0.0    # local Whisper on CPU, free
+
+# ── RAG / Vector Store ────────────────────────────────────────────────────────
 chromadb>=0.5.0
 pypdf>=4.0.0
 python-docx>=1.1.0
 
-# ── API + server ──────────────────────────────────────────────
+# ── Local embeddings fallback (no API key needed) ─────────────────────────────
+sentence-transformers>=3.0.0   # runs on CPU, truly free
+
+# ── API / Backend ─────────────────────────────────────────────────────────────
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9
 httpx>=0.27.0
 pydantic>=2.7.0
 
-# ── Cache ─────────────────────────────────────────────────────
-redis>=5.0.0
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+websockets>=12.0
 
-# ── Observability (optional — install anyway for imports) ─────
+# ── Observability (optional) ──────────────────────────────────────────────────
 arize-phoenix>=4.0.0
 opentelemetry-sdk>=1.25.0
 opentelemetry-api>=1.25.0
 openinference-instrumentation-langchain>=0.1.29
-
-# ── Utilities ─────────────────────────────────────────────────
-python-dotenv>=1.0.0
